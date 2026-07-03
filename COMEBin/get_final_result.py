@@ -7,19 +7,15 @@ import pandas as pd
 
 from scripts.unitem_common import read_bins
 from scripts.unitem_markers import Markers
+from scripts.gen_bins_from_tsv import gen_bins_with_cluster_ids
+from scripts.unitem_defaults import CHECKM2_DIR, CHECKM2_QUALITY_REPORT
 from filter_small_bins import filter_small_bins
 
 from typing import List, Optional, Union, Dict
 
-# for each bin
-# update for checkm marker
-def get_binstats(bin_contig_names, markers):
-    _, comp, cont = markers.bin_quality(bin_contig_names)
-
-    return comp, cont
 
 def read_bins_nosequences(bin_dirs):
-    """Read sequences in bins."""
+    """Read contig-to-cluster assignments from TSV result files."""
 
     bins = defaultdict(lambda: defaultdict(set))
 
@@ -36,23 +32,22 @@ def read_bins_nosequences(bin_dirs):
     return bins, contigs_in_bins
 
 
-# update for checkm marker
-def get_bin_quality(orig_bins: Dict[str, Dict[int, List[int]]], methods_sorted: List[str], markers: List[int]):
+def get_bin_quality(quality_by_method: Dict[str, Dict[str, tuple]],
+                    methods_sorted: List[str]):
     """
-    Calculate the quality of each bin in the original bins and determine the best method.
+    Count high-quality bins for each clustering method using CheckM2 quality scores.
 
-    :param orig_bins: A dictionary of original bins with method IDs as keys and bin IDs as sub-keys.
-    :param methods_sorted: A list of method IDs sorted in a specific order.
-    :param markers: A list of markers used for bin quality calculations.
-
-    :return: A tuple containing a dictionary of bin quality information and the best method.
+    :param quality_by_method: {method_id: {bin_name: (completeness, contamination)}}
+    :param methods_sorted: List of method IDs sorted in a specific order.
+    :return: A tuple of (bin_quality_dict, best_method).
     """
     bin_quality_dict = defaultdict(lambda: {})
     sum_list = []
     sumcont5_list = []
 
-
     for method_id in methods_sorted:
+        quality = quality_by_method.get(method_id, {})
+
         num_5010 = 0
         num_7010 = 0
         num_9010 = 0
@@ -60,8 +55,7 @@ def get_bin_quality(orig_bins: Dict[str, Dict[int, List[int]]], methods_sorted: 
         num_705 = 0
         num_905 = 0
 
-        for bin_id in orig_bins[method_id]:
-            comp, cont = get_binstats(orig_bins[method_id][bin_id], markers)
+        for comp, cont in quality.values():
             if comp > 50 and cont < 10:
                 num_5010 += 1
             if comp > 70 and cont < 10:
@@ -84,7 +78,7 @@ def get_bin_quality(orig_bins: Dict[str, Dict[int, List[int]]], methods_sorted: 
         bin_quality_dict[method_id]['sum'] = num_5010 + num_7010 + num_9010 + num_505 + num_705 + num_905
         bin_quality_dict[method_id]['sum_cont5'] = num_505 + num_705 + num_905
 
-        sum_list.append(bin_quality_dict[method_id]['sum'] )
+        sum_list.append(bin_quality_dict[method_id]['sum'])
         sumcont5_list.append(bin_quality_dict[method_id]['sum_cont5'])
 
     sum_max = max(sum_list)
@@ -104,32 +98,30 @@ def get_bin_quality(orig_bins: Dict[str, Dict[int, List[int]]], methods_sorted: 
     return bin_quality_dict, best_method
 
 
-# update for checkm marker
-def savecontigs_with_high_bin_quality(orig_bins: Dict[str, Dict[int, List[int]]],
-                                    best_method: str, markers: List[int], outpath: str):
+def savecontigs_with_high_bin_quality(orig_bins: Dict[str, Dict], quality_by_bin: Dict[str, tuple],
+                                      best_method: str, outpath: str):
     """
-    Save contigs with high bin quality to text files based on specified criteria.
+    Save contigs belonging to high-quality bins to text files.
 
-    :param orig_bins: A dictionary of original bins with method IDs as keys and bin IDs as sub-keys.
-    :param best_method: The best method to consider.
-    :param markers: A list of markers used for bin quality calculations.
-    :param outpath: The path to save the output text files.
-    :return: None
+    :param orig_bins: {method_id: {cluster_id: set(contig_names)}}
+    :param quality_by_bin: {bin_name: (completeness, contamination)} for best_method
+    :param best_method: The best clustering method.
+    :param outpath: Directory where output text files are written.
     """
     bin_count_5010 = 0
     bin_count_5005 = 0
-    with open(outpath+'/'+best_method+'5010_res.txt','w') as f1:
-        with open(outpath+'/'+best_method+'5005_res.txt','w') as f2:
+    with open(outpath + '/' + best_method + '5010_res.txt', 'w') as f1:
+        with open(outpath + '/' + best_method + '5005_res.txt', 'w') as f2:
             for bin_id in orig_bins[best_method]:
-                comp, cont = get_binstats(orig_bins[best_method][bin_id], markers)
+                comp, cont = quality_by_bin.get(str(bin_id), (0.0, 0.0))
                 if comp > 50 and cont < 10:
                     for key in orig_bins[best_method][bin_id]:
-                        f1.write(key+'\t'+str(bin_count_5010)+'\n')
+                        f1.write(key + '\t' + str(bin_count_5010) + '\n')
                     bin_count_5010 += 1
 
                 if comp > 50 and cont < 5:
                     for key in orig_bins[best_method][bin_id]:
-                        f2.write(key+'\t'+str(bin_count_5005)+'\n')
+                        f2.write(key + '\t' + str(bin_count_5005) + '\n')
                     bin_count_5005 += 1
 
 
@@ -149,20 +141,46 @@ def write_estimated_bin_quality(bin_quality_dict, output_file):
     fout.close()
 
 
-def estimate_bins_quality_nobins(bac_mg_table, ar_mg_table, res_path, ignore_kmeans_res = False):
+def run_checkm2_on_bins(bins_dir: str, checkm2_out_dir: str, num_threads: int) -> bool:
+    """Run CheckM2 predict on a directory of bin FASTA files.
+
+    :param bins_dir: Directory containing bin FASTA files (*.fa).
+    :param checkm2_out_dir: Output directory for CheckM2.
+    :param num_threads: Number of threads to use.
+    :return: True if the quality_report.tsv was produced, False otherwise.
     """
-    Estimate the quality of bins based on SCG information.
+    quality_report = os.path.join(checkm2_out_dir, CHECKM2_QUALITY_REPORT)
+    if os.path.exists(quality_report):
+        return True
 
-    :param bac_mg_table: The path to the marker gene table for bacteria.
-    :param ar_mg_table: The path to the marker gene table for archaea.
-    :param res_path: The path to the result files.
-    :param ignore_kmeans_res: Whether to ignore K-means results (default: False).
+    if not os.path.exists(bins_dir) or not os.listdir(bins_dir):
+        return False
 
-    :return: The best method based on estimated bin quality.
+    make_sure_path_exists(checkm2_out_dir)
+    cmd = ('checkm2 predict --threads %d --input %s --extension fa '
+           '--output-directory %s' % (num_threads, bins_dir, checkm2_out_dir))
+    os.system(cmd)
+    return os.path.exists(quality_report)
+
+
+def estimate_bins_quality_nobins(contig_file: str, res_path: str, num_threads: int,
+                                 ignore_kmeans_res: bool = False) -> str:
+    """
+    Estimate the quality of bins for each clustering result using CheckM2.
+
+    For each TSV clustering result in res_path, this function:
+      1. Creates a per-cluster-ID bin directory (``<result>_checkm2_bins/``) if absent.
+      2. Runs CheckM2 on that directory (``<result>_checkm2/``) if not already done.
+      3. Counts high-quality bins (completeness/contamination thresholds).
+
+    :param contig_file: Path to the assembly FASTA used as input to COMEBin.
+    :param res_path: Directory containing clustering result TSV files.
+    :param num_threads: Number of threads for CheckM2.
+    :param ignore_kmeans_res: If True, skip TSV files whose names start with 'weight'.
+    :return: Filename of the best clustering result TSV.
     """
     markers = Markers()
 
-    # bin_dirs = get_bin_dirs(bin_dirs_file)
     filenames = os.listdir(res_path)
     namelist = []
     for filename in filenames:
@@ -177,19 +195,32 @@ def estimate_bins_quality_nobins(bac_mg_table, ar_mg_table, res_path, ignore_kme
 
     bin_dirs = {}
     for res in namelist:
-        bin_dirs[res] =  (res_path + res)
+        bin_dirs[res] = (res_path + res)
 
-    bins, contigs = read_bins_nosequences(bin_dirs)
-
+    bins, contigs_in_bins = read_bins_nosequences(bin_dirs)
     methods_sorted = sorted(bins.keys())
-    contig_lens = {cid: len(contigs[cid]) for cid in contigs}
     orig_bins = copy.deepcopy(bins)
 
-    gene_tables = markers.marker_gene_tables(bac_mg_table, ar_mg_table)
+    # For each clustering result, create bins with cluster IDs as filenames
+    # then run CheckM2 to obtain per-bin quality scores.
+    quality_by_method = {}
+    for res in namelist:
+        tsv_path = res_path + res
+        checkm2_bins_dir = tsv_path + '_checkm2_bins'
+        checkm2_out_dir = tsv_path + '_checkm2'
+        quality_report = os.path.join(checkm2_out_dir, CHECKM2_QUALITY_REPORT)
 
-    bin_quality_dict, best_method = get_bin_quality(orig_bins, methods_sorted, markers)
+        if not os.path.exists(checkm2_bins_dir):
+            gen_bins_with_cluster_ids(contig_file, tsv_path, checkm2_bins_dir)
 
-    savecontigs_with_high_bin_quality(orig_bins, best_method, markers, res_path)
+        run_checkm2_on_bins(checkm2_bins_dir, checkm2_out_dir, num_threads)
+
+        quality_by_method[res] = markers.read_quality_report(quality_report)
+
+    bin_quality_dict, best_method = get_bin_quality(quality_by_method, methods_sorted)
+
+    savecontigs_with_high_bin_quality(orig_bins, quality_by_method.get(best_method, {}),
+                                      best_method, res_path)
 
     output_file = res_path + 'estimate_res.txt'
     write_estimated_bin_quality(bin_quality_dict, output_file)
@@ -199,38 +230,22 @@ def estimate_bins_quality_nobins(bac_mg_table, ar_mg_table, res_path, ignore_kme
 def run_get_final_result(logger, args, seed_num: int, num_threads: int = 40,
                          res_name: Optional[str] = None, ignore_kmeans_res: bool = True):
     """
-    Run the final step to get the best clustering result based on estimated bin quality.
+    Run the final step to select the best clustering result based on CheckM2 quality.
 
     :param seed_num: The seed number.
-    :param num_threads: The number of threads to use (default: 40).
-    :param res_name: The name of the result (default: None).
+    :param num_threads: The number of threads (default: 40).
+    :param res_name: Unused; kept for API compatibility.
     :param ignore_kmeans_res: Whether to ignore K-means results (default: True).
     """
     logger.info("Seed_num:\t" + str(seed_num))
 
-    if not (args.bac_mg_table and args.ar_mg_table):
-        logger.info("Run unitem profile:\t" + str(seed_num))
-        bin_dirs = {}
-        if res_name==None:
-            res_name = 'weight_seed_kmeans_k_' + str(seed_num) + '_result.tsv'
-        bin_dirs[res_name] = (args.output_path + '/cluster_res/' + res_name + '_bins', 'fa')
+    best_method = estimate_bins_quality_nobins(
+        args.contig_file,
+        args.output_path + '/cluster_res/',
+        num_threads,
+        ignore_kmeans_res=ignore_kmeans_res,
+    )
 
-        output_dir = args.output_path + '/cluster_res/unitem_profile'
-
-        if not (os.path.exists(output_dir)):
-            make_sure_path_exists(output_dir)
-            profile = Profile(num_threads)
-            profile.run(bin_dirs,
-                        output_dir)
-
-        bac_mg_table = output_dir + '/binning_methods/' + res_name + '/checkm_bac/marker_gene_table.tsv'
-        ar_mg_table = output_dir + '/binning_methods/' + res_name + '/checkm_ar/marker_gene_table.tsv'
-    else:
-        bac_mg_table = args.bac_mg_table
-        ar_mg_table = args.ar_mg_table
-
-    best_method = estimate_bins_quality_nobins(bac_mg_table, ar_mg_table, args.output_path + '/cluster_res/',ignore_kmeans_res=ignore_kmeans_res)
-
-    logger.info('Final result:\t'+args.output_path + '/cluster_res/'+best_method)
-    filter_small_bins(logger, args.contig_file, args.output_path + '/cluster_res/'+best_method, args)
+    logger.info('Final result:\t' + args.output_path + '/cluster_res/' + best_method)
+    filter_small_bins(logger, args.contig_file, args.output_path + '/cluster_res/' + best_method, args)
 

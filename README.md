@@ -164,7 +164,7 @@ Options:
 ## <a name="References"></a>References
 [1] Meyer F, Fritz A, Deng Z L, et al. Critical assessment of metagenome interpretation: the second round of challenges[J]. Nature methods, 2022, 19(4): 429-440.
 
-[2] Parks D H, Imelfort M, Skennerton C T, et al. CheckM: assessing the quality of microbial genomes recovered from isolates, single cells, and metagenomes[J]. Genome research, 2015, 25(7): 1043-1055.
+[2] Chklovski A, Parks D H, Woodcroft B J, et al. CheckM2: a rapid, scalable and accurate tool for assessing microbial genome quality using machine learning[J]. Nature Methods, 2023, 20(8): 1203-1212.
 
 [3] https://github.com/dparks1134/UniteM.
 

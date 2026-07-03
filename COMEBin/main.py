@@ -244,9 +244,6 @@ def arguments():
     get_result_subparsers.add_argument('--num_threads', default=10, type=int,
                                        help='num_threads for getting final result.')
 
-    get_result_subparsers.add_argument('--bac_mg_table', type=str, help=("bac_mg_table (bacteria marker gene information)"))
-    get_result_subparsers.add_argument('--ar_mg_table', type=str, help=("ar_mg_table (archea marker gene information)"))
-
     args = parser.parse_args()
     return args
 
