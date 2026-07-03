@@ -97,7 +97,7 @@ def gen_bins_with_cluster_ids(fastafile, resultfile, outputdir):
         os.makedirs(outputdir)
 
     for cluster_name, cluster in dic.items():
-        # Sanitise cluster_name so it is safe to use as a filename
+        # Sanitize cluster_name so it is safe to use as a filename
         safe_name = str(cluster_name).replace('/', '_').replace('\\', '_')
         binfile = os.path.join(outputdir, "{}.fa".format(safe_name))
         with open(binfile, "w") as f:

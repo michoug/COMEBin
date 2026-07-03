@@ -1,5 +1,6 @@
 from scripts.unitem_profile import Profile, make_sure_path_exists
 import copy
+import logging
 import os
 
 from collections import defaultdict
@@ -12,6 +13,8 @@ from scripts.unitem_defaults import CHECKM2_DIR, CHECKM2_QUALITY_REPORT
 from filter_small_bins import filter_small_bins
 
 from typing import List, Optional, Union, Dict
+
+logger = logging.getLogger('timestamp')
 
 
 def read_bins_nosequences(bin_dirs):
@@ -113,7 +116,11 @@ def savecontigs_with_high_bin_quality(orig_bins: Dict[str, Dict], quality_by_bin
     with open(outpath + '/' + best_method + '5010_res.txt', 'w') as f1:
         with open(outpath + '/' + best_method + '5005_res.txt', 'w') as f2:
             for bin_id in orig_bins[best_method]:
-                comp, cont = quality_by_bin.get(str(bin_id), (0.0, 0.0))
+                bin_name = str(bin_id)
+                if bin_name not in quality_by_bin:
+                    logger.warning('Bin %s not found in CheckM2 quality report; '
+                                   'assigning completeness=0, contamination=0.' % bin_name)
+                comp, cont = quality_by_bin.get(bin_name, (0.0, 0.0))
                 if comp > 50 and cont < 10:
                     for key in orig_bins[best_method][bin_id]:
                         f1.write(key + '\t' + str(bin_count_5010) + '\n')
@@ -213,7 +220,10 @@ def estimate_bins_quality_nobins(contig_file: str, res_path: str, num_threads: i
         if not os.path.exists(checkm2_bins_dir):
             gen_bins_with_cluster_ids(contig_file, tsv_path, checkm2_bins_dir)
 
-        run_checkm2_on_bins(checkm2_bins_dir, checkm2_out_dir, num_threads)
+        success = run_checkm2_on_bins(checkm2_bins_dir, checkm2_out_dir, num_threads)
+        if not success:
+            logger.warning('CheckM2 did not produce a quality report for %s; '
+                           'this result will count as having zero high-quality bins.' % res)
 
         quality_by_method[res] = markers.read_quality_report(quality_report)
 
