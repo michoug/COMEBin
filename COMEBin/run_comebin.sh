@@ -22,6 +22,7 @@ help_message () {
 	echo "  -e INT          embedding size for comebin network (default=2048)"
 	echo "  -c INT          embedding size for coverage network (default=2048)"
 	echo "  -b INT          batch size for training process (default=1024)"
+	echo "  -d STR          path to CheckM2 database file"
 	echo "";}
 
 
@@ -35,8 +36,9 @@ n_views=6
 emb_szs_forcov=2048
 emb_szs=2048
 batch_size=1024
+checkm2_db_path=""
 
-while getopts a:o:p:n:t:l:e:c:b: OPT; do
+while getopts a:o:p:n:t:l:e:c:b:d: OPT; do
  case ${OPT} in
   a) contig_file=$(realpath ${OPTARG})
     ;;
@@ -56,6 +58,8 @@ while getopts a:o:p:n:t:l:e:c:b: OPT; do
     ;;
   b) batch_size=${OPTARG}
     ;;
+  d) checkm2_db_path=${OPTARG}
+    ;;
   \?)
 #    printf "[Usage] `date '+%F %T'` -i <INPUT_FILE> -o <OUTPUT_DIR> -o <P
 #RODUCT_CODE> -s <SOFTWARE_VERSION> -t <TYPE>\n" >&2
@@ -67,6 +71,16 @@ done
 if [ -z "${contig_file}" -o -z "${output_dir}" -o -z "${bam_file_path}" ]; then
   help_message
   exit 1
+fi
+
+if [ -n "${checkm2_db_path}" ]; then
+    checkm2_db_path=$(realpath "${checkm2_db_path}")
+    if [ ! -f "${checkm2_db_path}" ]; then
+        echo "CheckM2 database file not found: ${checkm2_db_path}"
+        exit 1
+    fi
+    export CHECKM2DB="${checkm2_db_path}"
+    echo "Using CheckM2 database: ${CHECKM2DB}"
 fi
 
 
@@ -182,4 +196,3 @@ python main.py get_result --contig_file ${contig_file} \
 --seed_file ${seed_file} --num_threads ${num_threads}
 
 if [[ $? -ne 0 ]] ; then echo "Something went wrong with running clustering. Exiting.";exit 1; fi
-

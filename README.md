@@ -187,6 +187,7 @@ Options:
   -e INT          embedding size for combine network (default=2048)
   -c INT          embedding size for coverage network (default=2048)
   -b INT          batch size for training process (default=1024)
+  -d STR          path to CheckM2 database file (optional)
 ```
 
 ## <a name="References"></a>References
