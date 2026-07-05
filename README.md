@@ -4,6 +4,7 @@ GitHub repository for the manuscript "Effective binning of metagenomic contigs u
 - [System Requirements](#requirements)
 - [Install COMEBin via bioconda](#install)
 - [Install COMEBin via source code](#started)
+- [Download the CheckM2 database](#checkm2db)
 - [A test dataset to demo COMEBin](#demo)
 - [Preprocessing](#preprocessing)
 - [How to run COMEBin](#runcomebin)
@@ -57,6 +58,33 @@ cd path_to_COMEBin
 conda env create -f comebin_env.yaml
 conda activate comebin_env
 ```
+
+## <a name="checkm2db"></a>Download the CheckM2 database
+COMEBin uses CheckM2 in the final quality assessment step, so the CheckM2 database must be available before running COMEBin.
+
+### Way 1: Download to the default location
+```sh
+checkm2 database --download
+```
+
+### Way 2: Download to a custom location
+```sh
+checkm2 database --download --path /custom/path/
+```
+
+### Way 3: Use a pre-downloaded database
+Set the database path with an environment variable:
+```sh
+export CHECKM2DB="/path/to/CheckM2_database/uniref100.KO.1.dmnd"
+```
+Or pass it directly when running CheckM2:
+```sh
+checkm2 predict --threads 30 --input <folder_with_bins> --output-directory <output_folder> --database_path /path/to/CheckM2_database/uniref100.KO.1.dmnd
+```
+
+### Way 4: Manual download from Zenodo
+If automatic download is unavailable, download the CheckM2 reference database from:
+https://zenodo.org/record/14897628
 
 ## <a name="demo"></a>A test dataset to demo COMEBin
 We provide a small dataset to demo and test the software. Test data is available at https://drive.google.com/file/d/1xWpN2z8JTaAzWW4TcOl0Lr4Y_x--Fs5s/view?usp=sharing.
