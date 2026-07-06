@@ -243,6 +243,11 @@ def arguments():
                                        help='mininum contig length for clustering')
     get_result_subparsers.add_argument('--num_threads', default=10, type=int,
                                        help='num_threads for getting final result.')
+    get_result_subparsers.add_argument('--num_parallel_jobs', default=1, type=int,
+                                       help='Number of CheckM2 quality estimation jobs to run in '
+                                            'parallel (default: 1). Increasing this reduces '
+                                            'wall-clock time when evaluating many clustering results. '
+                                            'Total CPU usage is num_parallel_jobs * num_threads.')
 
     args = parser.parse_args()
     return args

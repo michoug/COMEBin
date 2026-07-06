@@ -4,6 +4,7 @@ import logging
 import os
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 from scripts.unitem_common import read_bins
@@ -170,8 +171,34 @@ def run_checkm2_on_bins(bins_dir: str, checkm2_out_dir: str, num_threads: int) -
     return os.path.exists(quality_report)
 
 
+def _prepare_and_run_checkm2_job(contig_file: str, res_path: str, res: str,
+                                 num_threads: int):
+    """Prepare a bin directory and run CheckM2 for a single TSV result.
+
+    This function is designed to be called from a thread pool so that multiple
+    TSV results can be evaluated in parallel.
+
+    :param contig_file: Path to the assembly FASTA.
+    :param res_path: Directory containing clustering result TSV files.
+    :param res: Filename of the TSV result.
+    :param num_threads: Number of threads for this CheckM2 invocation.
+    :return: (res, success, quality_report_path)
+    """
+    tsv_path = res_path + res
+    checkm2_bins_dir = tsv_path + '_checkm2_bins'
+    checkm2_out_dir = tsv_path + '_checkm2'
+    quality_report = os.path.join(checkm2_out_dir, CHECKM2_QUALITY_REPORT)
+
+    if not os.path.exists(checkm2_bins_dir):
+        gen_bins_with_cluster_ids(contig_file, tsv_path, checkm2_bins_dir)
+
+    success = run_checkm2_on_bins(checkm2_bins_dir, checkm2_out_dir, num_threads)
+    return res, success, quality_report
+
+
 def estimate_bins_quality_nobins(contig_file: str, res_path: str, num_threads: int,
-                                 ignore_kmeans_res: bool = False) -> str:
+                                 ignore_kmeans_res: bool = False,
+                                 num_parallel_jobs: int = 1) -> str:
     """
     Estimate the quality of bins for each clustering result using CheckM2.
 
@@ -182,8 +209,13 @@ def estimate_bins_quality_nobins(contig_file: str, res_path: str, num_threads: i
 
     :param contig_file: Path to the assembly FASTA used as input to COMEBin.
     :param res_path: Directory containing clustering result TSV files.
-    :param num_threads: Number of threads for CheckM2.
+    :param num_threads: Number of threads for each CheckM2 invocation.
     :param ignore_kmeans_res: If True, skip TSV files whose names start with 'weight'.
+    :param num_parallel_jobs: Number of CheckM2 jobs to run concurrently. When > 1,
+        multiple clustering results are evaluated at the same time, which can
+        substantially reduce wall-clock time on machines with many cores.
+        Each job uses ``num_threads`` threads, so the total CPU consumption is
+        ``num_parallel_jobs * num_threads``.
     :return: Filename of the best clustering result TSV.
     """
     markers = Markers()
@@ -211,21 +243,39 @@ def estimate_bins_quality_nobins(contig_file: str, res_path: str, num_threads: i
     # For each clustering result, create bins with cluster IDs as filenames
     # then run CheckM2 to obtain per-bin quality scores.
     quality_by_method = {}
-    for res in namelist:
-        tsv_path = res_path + res
-        checkm2_bins_dir = tsv_path + '_checkm2_bins'
-        checkm2_out_dir = tsv_path + '_checkm2'
-        quality_report = os.path.join(checkm2_out_dir, CHECKM2_QUALITY_REPORT)
 
-        if not os.path.exists(checkm2_bins_dir):
-            gen_bins_with_cluster_ids(contig_file, tsv_path, checkm2_bins_dir)
+    if num_parallel_jobs > 1:
+        logger.info('Running CheckM2 on %d results with %d parallel jobs.' % (len(namelist), num_parallel_jobs))
+        with ThreadPoolExecutor(max_workers=num_parallel_jobs) as executor:
+            future_to_res = {
+                executor.submit(
+                    _prepare_and_run_checkm2_job,
+                    contig_file, res_path, res, num_threads
+                ): res
+                for res in namelist
+            }
+            for future in as_completed(future_to_res):
+                res, success, quality_report = future.result()
+                if not success:
+                    logger.warning('CheckM2 did not produce a quality report for %s; '
+                                   'this result will count as having zero high-quality bins.' % res)
+                quality_by_method[res] = markers.read_quality_report(quality_report)
+    else:
+        for res in namelist:
+            tsv_path = res_path + res
+            checkm2_bins_dir = tsv_path + '_checkm2_bins'
+            checkm2_out_dir = tsv_path + '_checkm2'
+            quality_report = os.path.join(checkm2_out_dir, CHECKM2_QUALITY_REPORT)
 
-        success = run_checkm2_on_bins(checkm2_bins_dir, checkm2_out_dir, num_threads)
-        if not success:
-            logger.warning('CheckM2 did not produce a quality report for %s; '
-                           'this result will count as having zero high-quality bins.' % res)
+            if not os.path.exists(checkm2_bins_dir):
+                gen_bins_with_cluster_ids(contig_file, tsv_path, checkm2_bins_dir)
 
-        quality_by_method[res] = markers.read_quality_report(quality_report)
+            success = run_checkm2_on_bins(checkm2_bins_dir, checkm2_out_dir, num_threads)
+            if not success:
+                logger.warning('CheckM2 did not produce a quality report for %s; '
+                               'this result will count as having zero high-quality bins.' % res)
+
+            quality_by_method[res] = markers.read_quality_report(quality_report)
 
     bin_quality_dict, best_method = get_bin_quality(quality_by_method, methods_sorted)
 
@@ -243,17 +293,20 @@ def run_get_final_result(logger, args, seed_num: int, num_threads: int = 40,
     Run the final step to select the best clustering result based on CheckM2 quality.
 
     :param seed_num: The seed number.
-    :param num_threads: The number of threads (default: 40).
+    :param num_threads: The number of threads per CheckM2 job (default: 40).
     :param res_name: Unused; kept for API compatibility.
     :param ignore_kmeans_res: Whether to ignore K-means results (default: True).
     """
     logger.info("Seed_num:\t" + str(seed_num))
+
+    num_parallel_jobs = getattr(args, 'num_parallel_jobs', 1)
 
     best_method = estimate_bins_quality_nobins(
         args.contig_file,
         args.output_path + '/cluster_res/',
         num_threads,
         ignore_kmeans_res=ignore_kmeans_res,
+        num_parallel_jobs=num_parallel_jobs,
     )
 
     logger.info('Final result:\t' + args.output_path + '/cluster_res/' + best_method)

@@ -23,6 +23,7 @@ help_message () {
 	echo "  -c INT          embedding size for coverage network (default=2048)"
 	echo "  -b INT          batch size for training process (default=1024)"
 	echo "  -d STR          path to CheckM2 database file"
+	echo "  -j INT          number of CheckM2 jobs to run in parallel during quality estimation (default=1)"
 	echo "";}
 
 run_file_path=$(dirname $(which run_comebin.sh))
@@ -44,8 +45,9 @@ emb_szs_forcov=2048
 emb_szs=2048
 batch_size=1024
 checkm2_db_path=""
+num_parallel_jobs=1
 
-while getopts a:o:p:n:t:l:e:c:b:d: OPT; do
+while getopts a:o:p:n:t:l:e:c:b:d:j: OPT; do
  case ${OPT} in
   a) contig_file=$(realpath ${OPTARG})
     ;;
@@ -66,6 +68,8 @@ while getopts a:o:p:n:t:l:e:c:b:d: OPT; do
   b) batch_size=${OPTARG}
     ;;
   d) checkm2_db_path=${OPTARG}
+    ;;
+  j) num_parallel_jobs=${OPTARG}
     ;;
   \?)
 #    printf "[Usage] `date '+%F %T'` -i <INPUT_FILE> -o <OUTPUT_DIR> -o <P
@@ -200,6 +204,7 @@ python main.py bin --contig_file ${contig_file} \
 
 python main.py get_result --contig_file ${contig_file} \
 --output_path ${output_dir}/comebin_res \
---seed_file ${seed_file} --num_threads ${num_threads}
+--seed_file ${seed_file} --num_threads ${num_threads} \
+--num_parallel_jobs ${num_parallel_jobs}
 
 if [[ $? -ne 0 ]] ; then echo "Something went wrong with running clustering. Exiting.";exit 1; fi

@@ -188,6 +188,7 @@ Options:
   -c INT          embedding size for coverage network (default=2048)
   -b INT          batch size for training process (default=1024)
   -d STR          path to CheckM2 database file (optional)
+  -j INT          number of CheckM2 jobs to run in parallel during quality estimation (default=1)
 ```
 
 ## <a name="References"></a>References
