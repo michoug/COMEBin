@@ -23,6 +23,7 @@ from __future__ import print_function
 
 import os
 import sys
+import subprocess
 import logging
 from collections import defaultdict, Counter
 
@@ -162,9 +163,10 @@ class Profile():
 
             if not os.path.exists(quality_report):
                 make_sure_path_exists(cur_output_dir)
-                cmd = 'checkm2 predict --threads %d --input %s --extension %s --output-directory %s' % (
-                    self.cpus, bin_dir, bin_ext, cur_output_dir)
-                os.system(cmd)
+                cmd = ['checkm2', 'predict', '--threads', str(self.cpus),
+                       '--input', bin_dir, '--extension', bin_ext,
+                       '--output-directory', cur_output_dir]
+                subprocess.run(cmd, check=False)
 
             if not os.path.exists(quality_report):
                 self.logger.error('Missing CheckM2 quality report for %s.' % method_id)
