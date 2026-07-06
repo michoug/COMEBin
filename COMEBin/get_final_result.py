@@ -2,6 +2,7 @@ from scripts.unitem_profile import Profile, make_sure_path_exists
 import copy
 import logging
 import os
+import subprocess
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -165,9 +166,10 @@ def run_checkm2_on_bins(bins_dir: str, checkm2_out_dir: str, num_threads: int) -
         return False
 
     make_sure_path_exists(checkm2_out_dir)
-    cmd = ('checkm2 predict --threads %d --input %s --extension fa '
-           '--output-directory %s' % (num_threads, bins_dir, checkm2_out_dir))
-    os.system(cmd)
+    cmd = ['checkm2', 'predict', '--threads', str(num_threads),
+           '--input', bins_dir, '--extension', 'fa',
+           '--output-directory', checkm2_out_dir]
+    subprocess.run(cmd, check=False)
     return os.path.exists(quality_report)
 
 
@@ -242,39 +244,26 @@ def estimate_bins_quality_nobins(contig_file: str, res_path: str, num_threads: i
 
     # For each clustering result, create bins with cluster IDs as filenames
     # then run CheckM2 to obtain per-bin quality scores.
+    # Both serial (num_parallel_jobs=1) and parallel paths share the same
+    # post-processing logic; the executor enforces concurrency.
     quality_by_method = {}
 
     if num_parallel_jobs > 1:
         logger.info('Running CheckM2 on %d results with %d parallel jobs.' % (len(namelist), num_parallel_jobs))
-        with ThreadPoolExecutor(max_workers=num_parallel_jobs) as executor:
-            future_to_res = {
-                executor.submit(
-                    _prepare_and_run_checkm2_job,
-                    contig_file, res_path, res, num_threads
-                ): res
-                for res in namelist
-            }
-            for future in as_completed(future_to_res):
-                res, success, quality_report = future.result()
-                if not success:
-                    logger.warning('CheckM2 did not produce a quality report for %s; '
-                                   'this result will count as having zero high-quality bins.' % res)
-                quality_by_method[res] = markers.read_quality_report(quality_report)
-    else:
-        for res in namelist:
-            tsv_path = res_path + res
-            checkm2_bins_dir = tsv_path + '_checkm2_bins'
-            checkm2_out_dir = tsv_path + '_checkm2'
-            quality_report = os.path.join(checkm2_out_dir, CHECKM2_QUALITY_REPORT)
 
-            if not os.path.exists(checkm2_bins_dir):
-                gen_bins_with_cluster_ids(contig_file, tsv_path, checkm2_bins_dir)
-
-            success = run_checkm2_on_bins(checkm2_bins_dir, checkm2_out_dir, num_threads)
+    with ThreadPoolExecutor(max_workers=max(1, num_parallel_jobs)) as executor:
+        futures = {
+            executor.submit(
+                _prepare_and_run_checkm2_job,
+                contig_file, res_path, res, num_threads
+            ): res
+            for res in namelist
+        }
+        for future in as_completed(futures):
+            res, success, quality_report = future.result()
             if not success:
                 logger.warning('CheckM2 did not produce a quality report for %s; '
                                'this result will count as having zero high-quality bins.' % res)
-
             quality_by_method[res] = markers.read_quality_report(quality_report)
 
     bin_quality_dict, best_method = get_bin_quality(quality_by_method, methods_sorted)
